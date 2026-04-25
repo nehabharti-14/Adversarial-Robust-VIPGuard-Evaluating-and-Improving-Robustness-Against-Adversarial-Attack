@@ -1,0 +1,226 @@
+{
+  "project": "VIPGuard Adversarial Robustness Extension",
+  "description": "Results from all training experiments. Each run documents parameters, observations, and outcomes to explain how different choices caused different behaviours.",
+
+  "runs": [
+
+    {
+      "run_id": "R0_baseline",
+      "label": "Baseline — Pretrained VIPTokens, No Adversarial Training",
+      "date": "2026-04-18",
+      "parameters": {
+        "token_init": "pretrained (FaceDATA/Pretrained_VIPToken)",
+        "training": "none — original Stage3 clean training only",
+        "lr": null,
+        "epochs": null,
+        "adv_fraction": 0.0,
+        "prompt_sim_source": "live TransFace sim (clean image)",
+        "attack_epsilon": null
+      },
+      "key_observations": [
+        "Pretrained VIPTokens work perfectly on clean images and deepfakes",
+        "Completely vulnerable to adversarial attacks — FGSM/PGD drop TransFace sim to 19–63/100 and model says No",
+        "Model relies heavily on the similarity score text signal; no mechanism to override it"
+      ],
+      "results": {
+        "id0": { "normal_real": 1.00, "deepfake": 0.967, "fgsm_attack": 0.00, "pgd_attack": 0.00 },
+        "id1": { "normal_real": 1.00, "deepfake": 1.000, "fgsm_attack": 0.00, "pgd_attack": 0.00 },
+        "id2": { "normal_real": 1.00, "deepfake": 0.800, "fgsm_attack": 0.00, "pgd_attack": 0.00 }
+      },
+      "sim_means": {
+        "id0": { "normal_real": 90.6, "deepfake": 62.5, "fgsm_attack": 63.5, "pgd_attack": 23.6 },
+        "id1": { "normal_real": 93.7, "deepfake": 64.2, "fgsm_attack": 60.2, "pgd_attack": 19.5 },
+        "id2": { "normal_real": 92.1, "deepfake": 71.4, "fgsm_attack": 57.7, "pgd_attack": 18.7 }
+      },
+      "result_file": "results/before_adv_train/robustness_results.json"
+    },
+
+    {
+      "run_id": "R1_finetune_wrong_prompt",
+      "label": "Fine-tune (Pretrained Init) — Wrong Prompt Format, LR=0.001",
+      "date": "2026-04-18",
+      "parameters": {
+        "token_init": "pretrained",
+        "lr": 0.001,
+        "epochs": 3,
+        "adv_fraction": 0.25,
+        "prompt_sim_source": "adv_sim",
+        "training_prompt": "short format: 'just say yes or no without explanation'",
+        "eval_prompt": "long format: 'explain reasoning step by step based on facial attributes'"
+      },
+      "key_observations": [
+        "CRITICAL BUG: Training used short prompt format, evaluation used long prompt — complete distribution mismatch",
+        "Near-zero training loss (~0.04) because the short format is trivially answered; model never struggled",
+        "Token norm change: 0.019 TOTAL over 3 full epochs — tokens essentially did not move",
+        "Zero gradient signal on adversarial examples because model already answered correctly with trivial format",
+        "Prompt mismatch meant every gradient step was wasted",
+        "LR=0.001 also too low — even if prompt was correct, gradient would be too small"
+      ],
+      "results": {
+        "id0": { "normal_real": "~100%", "deepfake": "~95%", "fgsm_attack": "~0%", "pgd_attack": "~0%" }
+      },
+      "result_file": "none — results directory cleared before saving"
+    },
+
+    {
+      "run_id": "R2_finetune_correct_prompt_lr1",
+      "label": "Fine-tune (Pretrained Init) — Correct Prompt, LR=1.0, adv_sim in prompts",
+      "date": "2026-04-18",
+      "parameters": {
+        "token_init": "pretrained",
+        "lr": 1.0,
+        "epochs": 3,
+        "adv_fraction": 0.25,
+        "prompt_sim_source": "adv_sim (post-attack, low: 21–75/100)",
+        "training_prompt": "long format — matches eval exactly"
+      },
+      "key_observations": [
+        "Prompt fix worked: token norm change jumped to 0.23/step (vs 0.019 total before)",
+        "Adversarial loss: ~1.38 initially — model struggling with low-sim + [Yes] label",
+        "BUT: LR=1.0 on pretrained tokens caused catastrophic forgetting — normal_real dropped from 100% to 90%",
+        "adv_sim in prompt created severe text/label conflict: text says '21/100', label says [Yes]",
+        "Model could not reconcile low sim text with authentication label",
+        "Gradient conflict: clean examples pushed tokens one way, adversarial pushed another",
+        "id0 showed 0% FGSM/PGD even after training — pretrained token fine-tuning proven insufficient"
+      ],
+      "results": {
+        "id0": { "normal_real": "~90%", "deepfake": "~95%", "fgsm_attack": "~0%", "pgd_attack": "~0%" }
+      },
+      "result_file": "none — results directory cleared before saving"
+    },
+
+    {
+      "run_id": "R3_scratch_orig_sim",
+      "label": "From-Scratch Training — Random Init, orig_sim in prompts, LR=1.0",
+      "date": "2026-04-19",
+      "parameters": {
+        "token_init": "random (nn.init.normal_) — no pretrained weights loaded",
+        "lr": 1.0,
+        "epochs": 5,
+        "adv_fraction_in_json": 0.25,
+        "prompt_sim_source": "orig_sim (pre-attack, high: 91–94/100)",
+        "adv_fraction_training": 0.50,
+        "num_workers": 0,
+        "gradient_accumulation_step": 8,
+        "mixed_precision": "bf16"
+      },
+      "key_observations": [
+        "Hypothesis: using original (pre-attack) sim avoids text/label conflict — text says '91/100', label says [Yes]",
+        "Training loss healthy: 0.62–0.68, token norm change 2.75/step in epoch 1",
+        "Tokens learned from scratch successfully — no catastrophic forgetting since nothing to forget",
+        "CRITICAL MISMATCH: training used orig_sim (91/100) but evaluation used adv_sim (47–75/100)",
+        "Model learned: 'high sim + VIP tokens → Yes'. At eval: sees 47–75/100, always says No",
+        "Root cause: train/eval distribution mismatch on the sim score text signal",
+        "Normal_real and deepfake worked because they still see high/medium sim at eval time",
+        "id0 normal_real: 86.7% (3 errors at sim=79,82,82 — below learned threshold)"
+      ],
+      "results": {
+        "id0": { "normal_real": 0.867, "deepfake": 1.000, "fgsm_attack": 0.00, "pgd_attack": 0.00 },
+        "id1": { "normal_real": 1.000, "deepfake": 1.000, "fgsm_attack": 0.00, "pgd_attack": 0.00 },
+        "id2": { "normal_real": 1.000, "deepfake": 0.933, "fgsm_attack": 0.00, "pgd_attack": 0.00 }
+      },
+      "result_file": "none — results directory cleared before R4 rerun"
+    },
+
+    {
+      "run_id": "R4_scratch_adv_sim",
+      "label": "From-Scratch Training — Random Init, adv_sim in prompts, LR=1.0",
+      "date": "2026-04-20",
+      "parameters": {
+        "token_init": "random (nn.init.normal_)",
+        "lr": 1.0,
+        "epochs": 5,
+        "adv_fraction_in_json": 0.25,
+        "prompt_sim_source": "adv_sim (post-attack, low: 21–75/100) — matches eval exactly",
+        "adv_fraction_training": 0.50,
+        "num_workers": 0,
+        "gradient_accumulation_step": 8,
+        "mixed_precision": "bf16"
+      },
+      "key_observations": [
+        "Fix from R3: switched to adv_sim in training prompts to match eval distribution",
+        "Training loss: 0.68, token norm change 0.18/step (lower than R3 — harder learning problem)",
+        "Adversarial robustness fully solved: 100% FGSM and PGD across all IDs",
+        "CRITICAL FAILURE: deepfake detection collapsed — 0–26% accuracy",
+        "Root cause: sim ranges OVERLAP — deepfake sim (52–78/100) and adversarial real sim (47–75/100) are nearly identical",
+        "Model learned 'sim 47–75 → Yes' and applied this to deepfakes too",
+        "adv_loss dropped to ~0.002 by epoch 3 — adversarial examples fully memorized",
+        "With 20% adversarial data all labeled [Yes] and deepfakes also at similar sim, model collapsed toward Yes",
+        "Catastrophic tradeoff: fixing FGSM/PGD robustness broke deepfake detection"
+      ],
+      "results": {
+        "id0": { "normal_real": 1.000, "deepfake": 0.267, "fgsm_attack": 1.00, "pgd_attack": 1.00 },
+        "id1": { "normal_real": 1.000, "deepfake": 0.267, "fgsm_attack": 1.00, "pgd_attack": 1.00 },
+        "id2": { "normal_real": 1.000, "deepfake": 0.000, "fgsm_attack": 1.00, "pgd_attack": 1.00 }
+      },
+      "sim_means_at_eval": {
+        "id0": { "normal_real": 90.6, "deepfake": 62.5, "fgsm_attack": 63.5, "pgd_attack": 23.6 },
+        "id1": { "normal_real": 93.7, "deepfake": 64.2, "fgsm_attack": 60.2, "pgd_attack": 19.5 },
+        "id2": { "normal_real": 92.1, "deepfake": 71.4, "fgsm_attack": 57.7, "pgd_attack": 18.7 }
+      },
+      "result_file": "results/after_scratch_train/robustness_results.json",
+      "key_insight": "Sim score ranges for adversarial real (47–75) and deepfakes (52–78) overlap by ~20 points. The model cannot distinguish them by text signal alone — VIP tokens must learn visual discrimination. Simultaneous training on both objectives with same sim range proved too ambiguous."
+    },
+
+    {
+      "run_id": "R5_curriculum",
+      "label": "Curriculum Training — Stage1 Clean (LR=1.0, ep=3) + Stage2 Adv (LR=0.1, ep=3, adv=15%)",
+      "date": "2026-04-21",
+      "parameters": {
+        "token_init": "random (nn.init.normal_)",
+        "stage1": {
+          "data": "clean only (original Stage3 JSON)",
+          "lr": 1.0,
+          "epochs": 3,
+          "goal": "establish strong deepfake detection and VIP identity learning from scratch"
+        },
+        "stage2": {
+          "data": "mixed (original + adversarial, adv_sim in prompts)",
+          "lr": 0.1,
+          "epochs": 3,
+          "adv_fraction": 0.15,
+          "goal": "add adversarial robustness without destroying stage1 deepfake knowledge"
+        }
+      },
+      "hypothesis": "By learning deepfake discrimination first (stage 1), VIP tokens develop visual discrimination capability. Stage 2 fine-tunes with adversarial examples at lower LR (10x), adding robustness without erasing visual discrimination.",
+      "status": "complete",
+      "key_observations": [
+        "PGD robustness: FULLY SOLVED — 100% across all three IDs despite sim scores of only 14–34/100",
+        "Normal real: 100% across all IDs — no regression from baseline",
+        "FGSM result is identity-dependent: id2=100%, id0=46.7%, id1=13.3%",
+        "Deepfake detection: id0=96.7% (excellent), id1=80% (good), id2=43.3% (poor)",
+        "The FGSM/deepfake tradeoff persists at the identity level: id2 solved FGSM but lost deepfake; id0 kept deepfake but partially lost FGSM",
+        "Root cause: id2 deepfakes have sim range 54–86 (mean 71.4), heavily overlapping with FGSM range (46–72). With 15% adv_fraction, Stage2 pushed the id2 token toward 'accept medium sim' — fixing FGSM but accepting id2 deepfakes at sim 80–86",
+        "id0 deepfakes have sim range 52–78 (mean 62.5), lower overlap with normal_real — curriculum preserved deepfake detection better for id0",
+        "The fundamental challenge is not solved for all identities simultaneously: identities whose deepfake sim scores are highest (id2: mean 71.4) suffer most from adversarial training"
+      ],
+      "results": {
+        "id0": { "normal_real": 1.000, "deepfake": 0.967, "fgsm_attack": 0.467, "pgd_attack": 1.000 },
+        "id1": { "normal_real": 1.000, "deepfake": 0.800, "fgsm_attack": 0.133, "pgd_attack": 1.000 },
+        "id2": { "normal_real": 1.000, "deepfake": 0.433, "fgsm_attack": 1.000, "pgd_attack": 1.000 }
+      },
+      "sim_means_at_eval": {
+        "id0": { "normal_real": 90.6, "deepfake": 62.5, "fgsm_attack": 63.5, "pgd_attack": 23.6 },
+        "id1": { "normal_real": 93.7, "deepfake": 64.2, "fgsm_attack": 60.2, "pgd_attack": 19.5 },
+        "id2": { "normal_real": 92.1, "deepfake": 71.4, "fgsm_attack": 57.7, "pgd_attack": 18.7 }
+      },
+      "result_file": "results/after_scratch_train/robustness_results.json",
+      "comparison_vs_baseline": {
+        "pgd_attack": "0% → 100% (+100pp) — fully solved",
+        "fgsm_attack": "0% → 53% avg (+53pp) — partially solved, identity-dependent",
+        "deepfake": "~92% avg → 73% avg (-19pp) — some regression, worst on id2",
+        "normal_real": "100% → 100% — no regression"
+      }
+    }
+  ],
+
+  "sim_range_overlap_analysis": {
+    "description": "The fundamental challenge in this problem",
+    "normal_real_sim_range": "79–95/100 (clean real VIP images)",
+    "deepfake_sim_range": "52–86/100 (face-swapped and synthesised deepfakes)",
+    "fgsm_attack_sim_range": "46–75/100 (after FGSM epsilon=8/255)",
+    "pgd_attack_sim_range": "13–34/100 (after PGD epsilon=8/255, 10 steps)",
+    "key_overlap": "Deepfake and FGSM adversarial real images have nearly identical sim ranges (52–78 vs 47–75). The model cannot use the sim score text signal to distinguish them — only VIP token visual discrimination can.",
+    "implication": "Any training strategy that teaches the model to accept low-sim images (for adversarial robustness) risks also teaching it to accept deepfakes. The solution must explicitly teach visual discrimination at this overlapping sim range."
+  }
+}

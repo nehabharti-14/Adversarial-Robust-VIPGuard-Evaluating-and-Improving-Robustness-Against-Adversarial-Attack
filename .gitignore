@@ -1,0 +1,33 @@
+# ── Model checkpoints (large, download separately) ──────────────────────────
+checkpoints/
+Face_Model/
+Models/Face_Model/checkpoints/
+
+# ── Dataset images (large, not redistributable) ─────────────────────────────
+FaceDATA/Training_Img/
+data/
+Example/
+
+# ── Generated results & logs ─────────────────────────────────────────────────
+pipeline_monitor.log
+*.log
+
+# ── Python cache ─────────────────────────────────────────────────────────────
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ── OS / editor artifacts ────────────────────────────────────────────────────
+.DS_Store
+**/.DS_Store
+Thumbs.db
+.vscode/
+
+# ── Claude Code session data ─────────────────────────────────────────────────
+.claude/
+
+# ── Jupyter checkpoints ──────────────────────────────────────────────────────
+.ipynb_checkpoints/
+**/.ipynb_checkpoints/

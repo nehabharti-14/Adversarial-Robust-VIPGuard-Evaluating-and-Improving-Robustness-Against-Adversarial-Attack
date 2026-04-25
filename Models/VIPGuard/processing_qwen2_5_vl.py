@@ -26,7 +26,13 @@
 from typing import List, Optional, Union
 
 from transformers.feature_extraction_utils import BatchFeature
-from transformers.image_utils import ImageInput, VideoInput
+from transformers.image_utils import ImageInput
+try:
+    from transformers.image_utils import VideoInput
+except ImportError:
+    # transformers >= 4.57.0 removed VideoInput; define a compatible alias
+    from typing import List
+    VideoInput = List[ImageInput]
 from transformers.processing_utils import ImagesKwargs, ProcessingKwargs, ProcessorMixin, Unpack, VideosKwargs
 from transformers.tokenization_utils_base import PreTokenizedInput, TextInput
 

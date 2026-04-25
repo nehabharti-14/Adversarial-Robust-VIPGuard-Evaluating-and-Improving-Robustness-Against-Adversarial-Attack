@@ -63,6 +63,7 @@ class Wrapper(nn.Module):
                 self.vl_model.facechecker.load_state_dict(pretrain['vip_token'])
         print("Loading Pre-trained VIP Token!")
 
+
     def forward(self, **kwargs):
         return self.vl_model.forward(**kwargs)
 

@@ -75,10 +75,10 @@ class VIP_Dataset(Dataset):
                 ]
             }
         ]
-        if 'r_r_i' in img_dir.lower():    # load the label according to the type of pairs
-            label = 0
+        if 'r_r_i' in img_dir.lower() or 'adv_real' in img_dir.lower():    # load the label according to the type of pairs
+            label = 0    # Authentic VIP (real or adversarially perturbed real)
         else:
-            label = 1
+            label = 1    # Impostor / deepfake
             
         question = chat[0]
         answer = chat[1]

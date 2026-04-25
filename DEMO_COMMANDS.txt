@@ -1,0 +1,179 @@
+==============================================================
+  VIPGUARD — INFERENCE DEMO GUIDE
+  For Professor Presentation
+  Run in PowerShell from: e:\VIPGuard
+==============================================================
+
+
+==============================================================
+STEP 1 — Open PowerShell and navigate to project folder
+==============================================================
+
+  cd e:\VIPGuard
+  $env:PYTORCH_CUDA_ALLOC_CONF = "expandable_segments:True"
+
+
+==============================================================
+STEP 2 — Verify all required files exist
+==============================================================
+
+  C:\Users\TL1\anaconda3\envs\myexamenv\python.exe -c "
+import os
+checks = [
+  'checkpoints/checkpoints_attr_Stage2_merge/config.json',
+  'checkpoints/Stage3_scratch/id0/vip_token.pt',
+  'checkpoints/Stage3_scratch/id1/vip_token.pt',
+  'checkpoints/Stage3_scratch/id2/vip_token.pt',
+  'FaceDATA/FaceEmb_Center/id0.ckpt',
+  'Models/Face_Model/checkpoints/transface/glint360k_model_TransFace_L.pt',
+  'FaceDATA/Training_Img/id0/r_r_i/id0_1/2.png',
+  'FaceDATA/Training_Img/id0/r_efs_i/id0_1/fake.png',
+  'data/adversarial/fgsm/adv_real/id0/id0_1/adv.png',
+  'data/adversarial/pgd/adv_real/id0/id0_1/adv.png',
+]
+for c in checks:
+    print(('[OK ]' if os.path.exists(c) else '[MISSING]'), c)
+"
+
+  All lines must show [OK ].
+
+
+==============================================================
+STEP 3 — RUN INFERENCE (4 demo cases)
+==============================================================
+
+NOTE: The 32B model loads once (~40-60 sec on first call).
+      Run all 4 commands back-to-back in the SAME PowerShell
+      window — each subsequent call takes only 3-5 seconds.
+
+--------------------------------------------------------------
+Demo 1 — Real VIP image  →  Expected verdict: [Yes]
+--------------------------------------------------------------
+
+  C:\Users\TL1\anaconda3\envs\myexamenv\python.exe run_inference.py --image ./FaceDATA/Training_Img/id0/r_r_i/id0_1/2.png --id 0
+
+  Similarity: ~91/100  |  Model says [Yes] — correctly authenticated.
+
+--------------------------------------------------------------
+Demo 2 — Deepfake image  →  Expected verdict: [No]
+--------------------------------------------------------------
+
+  C:\Users\TL1\anaconda3\envs\myexamenv\python.exe run_inference.py --image ./FaceDATA/Training_Img/id0/r_efs_i/id0_1/fake.png --id 0
+
+  Similarity: ~60-70/100  |  Model says [No] — deepfake detected.
+
+--------------------------------------------------------------
+Demo 3 — FGSM adversarial attack  →  Expected verdict: [Yes]
+--------------------------------------------------------------
+
+  C:\Users\TL1\anaconda3\envs\myexamenv\python.exe run_inference.py --image ./data/adversarial/fgsm/adv_real/id0/id0_1/adv.png --id 0
+
+  TransFace fooled: similarity drops to ~47-75/100.
+  Image looks identical to real photo (epsilon = 8/255).
+  Before training: 0% accuracy. After curriculum: [Yes].
+
+--------------------------------------------------------------
+Demo 4 — PGD adversarial attack  →  Expected verdict: [Yes]
+--------------------------------------------------------------
+
+  C:\Users\TL1\anaconda3\envs\myexamenv\python.exe run_inference.py --image ./data/adversarial/pgd/adv_real/id0/id0_1/adv.png --id 0
+
+  TransFace heavily fooled: similarity drops to ~14-34/100.
+  Before training: 0% accuracy. After curriculum: 100% accuracy.
+
+--------------------------------------------------------------
+Demo 5 — Your own photo (optional live audience demo)
+--------------------------------------------------------------
+
+  C:\Users\TL1\anaconda3\envs\myexamenv\python.exe run_inference.py --image "C:\path\to\your\photo.jpg" --id 0
+
+  Should say [No] — your photo is not the registered VIP id0.
+
+
+==============================================================
+STEP 4 — Same demos for id1 and id2 (optional)
+==============================================================
+
+  C:\Users\TL1\anaconda3\envs\myexamenv\python.exe run_inference.py --image ./FaceDATA/Training_Img/id1/r_r_i/id1_1/2.png --id 1
+  C:\Users\TL1\anaconda3\envs\myexamenv\python.exe run_inference.py --image ./FaceDATA/Training_Img/id1/r_efs_i/id1_1/fake.png --id 1
+  C:\Users\TL1\anaconda3\envs\myexamenv\python.exe run_inference.py --image ./data/adversarial/pgd/adv_real/id1/id1_1/adv.png --id 1
+
+  C:\Users\TL1\anaconda3\envs\myexamenv\python.exe run_inference.py --image ./FaceDATA/Training_Img/id2/r_r_i/id2_1/2.png --id 2
+  C:\Users\TL1\anaconda3\envs\myexamenv\python.exe run_inference.py --image ./FaceDATA/Training_Img/id2/r_efs_i/id2_1/fake.png --id 2
+  C:\Users\TL1\anaconda3\envs\myexamenv\python.exe run_inference.py --image ./data/adversarial/pgd/adv_real/id2/id2_1/adv.png --id 2
+
+
+==============================================================
+EXPECTED OUTPUT FORMAT
+==============================================================
+
+  ============================================================
+    VIPGUARD INFERENCE RESULT
+  ============================================================
+    Image   : ./FaceDATA/Training_Img/id0/r_r_i/id0_1/2.png
+    VIP ID  : id0
+    Sim     : 91/100
+    Verdict : YES - Authenticated as VIP
+  ------------------------------------------------------------
+    Model output:
+    <Conclusion>[Yes] The facial structure, eye spacing and
+    jawline are consistent with the registered VIP profile.
+    </Conclusion>
+  ============================================================
+
+
+==============================================================
+RESULTS SUMMARY (to show professor if asked)
+==============================================================
+
+  Category        id0      id1      id2
+  ---------------------------------------
+  Normal Real    100.0%   100.0%   100.0%
+  Deepfake        96.7%    80.0%    43.3%
+  FGSM Attack     46.7%    13.3%   100.0%
+  PGD Attack     100.0%   100.0%   100.0%
+
+  Baseline (before adversarial training):
+  FGSM Attack      0.0%     0.0%     0.0%
+  PGD Attack       0.0%     0.0%     0.0%
+
+
+==============================================================
+TROUBLESHOOTING
+==============================================================
+
+"conda is not recognized":
+  → Do NOT use "conda activate". Use the full python path:
+    C:\Users\TL1\anaconda3\envs\myexamenv\python.exe
+    (already done in all commands above)
+
+CUDA out of memory:
+  → Run: $env:PYTORCH_CUDA_ALLOC_CONF = "expandable_segments:True"
+  → Close all other GPU applications (browsers, games, etc.)
+
+Model takes long to load:
+  → Normal (40-60 sec). Keep the PowerShell window open
+    between demos. Model stays in GPU memory.
+
+"Cannot read image" error:
+  → Use forward slashes in path, e.g. ./FaceDATA/... not .\FaceDATA\...
+
+Verdict shows UNKNOWN:
+  → Append  --max_new_tokens 200  to the command.
+
+
+==============================================================
+QUICK COPY-PASTE FOR DEMO DAY (PowerShell)
+==============================================================
+
+cd e:\VIPGuard
+$env:PYTORCH_CUDA_ALLOC_CONF = "expandable_segments:True"
+
+C:\Users\TL1\anaconda3\envs\myexamenv\python.exe run_inference.py --image ./FaceDATA/Training_Img/id0/r_r_i/id0_1/2.png --id 0
+C:\Users\TL1\anaconda3\envs\myexamenv\python.exe run_inference.py --image ./FaceDATA/Training_Img/id0/r_efs_i/id0_1/fake.png --id 0
+C:\Users\TL1\anaconda3\envs\myexamenv\python.exe run_inference.py --image ./data/adversarial/fgsm/adv_real/id0/id0_1/adv.png --id 0
+C:\Users\TL1\anaconda3\envs\myexamenv\python.exe run_inference.py --image ./data/adversarial/pgd/adv_real/id0/id0_1/adv.png --id 0
+
+==============================================================
+END
+==============================================================

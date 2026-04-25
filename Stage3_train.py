@@ -3,6 +3,7 @@
 @Author  :   Kaiqing.Lin
 @Update  :   2025/05/01
 '''
+import gc
 import os
 import argparse
 from tqdm import tqdm
@@ -11,9 +12,11 @@ from torch.utils.data import DataLoader
 from termcolor import cprint
 from PIL import Image
 
+torch.backends.cudnn.benchmark = True #change
+
 # Configuration constants
 DEFAULT_CONFIG = {
-    'MAX_IMAGE_SIZE': 448,        # Maximum image size
+    'MAX_IMAGE_SIZE': 112,        # Cap at 112px to reduce visual token count and peak VRAM
     'DEFAULT_LR': 1.0,            # Default learning rate
     'WEIGHT_DECAY': 1e-3,         # Weight decay
     'MAX_NEW_TOKENS': 4096,       # Maximum newly generated tokens
@@ -64,6 +67,11 @@ def train_one_epoch(model, processor, train_loader, optimizer, args, epoch, sche
     # Training loop
     for batch_idx, data in tqdm(enumerate(train_loader), total=len(train_loader), desc=f"Epoch {epoch}"):
         model.train()
+        # Release Python GC objects first, then CUDA allocator cached blocks.
+        # gc.collect() frees any tensor references Python GC hasn't released yet;
+        # empty_cache() then returns those blocks to the CUDA driver.
+        gc.collect()
+        torch.cuda.empty_cache()
 
         # Extract data from batch
         message = data['message']
@@ -143,14 +151,15 @@ def train_one_epoch(model, processor, train_loader, optimizer, args, epoch, sche
         inputs = inputs.to("cuda")
         inputs_question = inputs_question.to("cuda")
 
-        # Forward pass (support mixed precision)
+        # Forward pass (support mixed precision).
+        # use_cache=False: disable KV cache (not needed for training, wastes VRAM).
         if args.use_mixed_precision:
             with torch.cuda.amp.autocast(dtype=mixed_precision_dtype):
-                outs = model(labels=labels, **inputs)
+                outs = model(labels=labels, use_cache=False, **inputs)
                 loss_vqa = outs.loss
                 loss = loss_vqa
         else:
-            outs = model(labels=labels, **inputs)
+            outs = model(labels=labels, use_cache=False, **inputs)
             loss_vqa = outs.loss
             loss = loss_vqa
 
@@ -165,6 +174,10 @@ def train_one_epoch(model, processor, train_loader, optimizer, args, epoch, sche
             # BF16 or standard precision: direct backward
             loss.backward()
 
+        # Free ALL large tensors immediately after backward — do not let them linger
+        # until the next gc cycle. loss/loss_vqa are scalars but hold autograd graph refs.
+        del outs, inputs, inputs_question, labels, loss, loss_vqa
+
         # Update parameters based on gradient accumulation
         if gradient_accumulation_step >= args.gradient_accumulation_step:
             # Monitor changes in the VIP prompt
@@ -172,12 +185,22 @@ def train_one_epoch(model, processor, train_loader, optimizer, args, epoch, sche
 
             # Parameter update (support mixed precision)
             if args.use_mixed_precision and scaler is not None:
-                # FP16: update using the scaler
+                # FP16: unscale before clipping so clip operates on true gradients
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 scaler.step(optimizer)
                 scaler.update()
             else:
-                # BF16 or standard precision: direct optimizer step
+                # BF16 or standard precision: clip then step
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 optimizer.step()
+
+            # Guard: NaN/Inf in vip_prompt corrupts all subsequent forward passes.
+            # Happens when near-zero loss → tiny gradient → AdamW denominator blowup in BF16.
+            vp = model.vl_model.facechecker.face_checker.vip_prompt.data
+            if torch.isnan(vp).any() or torch.isinf(vp).any():
+                torch.nan_to_num_(vp, nan=0.0, posinf=1.0, neginf=-1.0)
+                print("WARNING: NaN/Inf in vip_prompt after optimizer step — reset to zero")
 
             new_prompt = model.vl_model.facechecker.face_checker.vip_prompt.data.clone()
 
@@ -194,6 +217,8 @@ def train_one_epoch(model, processor, train_loader, optimizer, args, epoch, sche
             optimizer.zero_grad()
             gradient_accumulation_step = 0
             scheduler.step()
+            gc.collect()
+            torch.cuda.empty_cache()
         else:
             gradient_accumulation_step += 1
 
@@ -328,6 +353,7 @@ def main():
         optim_facechecker=args.optim_facechecker,
         vip_token_num=args.token_num
     )
+    model.vl_model.gradient_checkpointing_enable()
 
     # Load training dataset
     train_json_path = args.train_json_path
@@ -338,7 +364,7 @@ def main():
         train_loader = DataLoader(
             train_set, 
             batch_size=1, 
-            num_workers=1, 
+            num_workers=4, #change 
             pin_memory=True, 
             shuffle=True
         )

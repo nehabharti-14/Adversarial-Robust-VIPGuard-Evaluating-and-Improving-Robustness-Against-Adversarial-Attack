@@ -380,7 +380,7 @@ class Qwen2_5_VLPreTrainedModel(PreTrainedModel):
     _supports_static_cache = False  # TODO (joao): fix. torch.compile failing probably due to `cache_positions`
 
     def _init_weights(self, module):
-        std = self.config.initializer_range
+        std = getattr(self.config, 'initializer_range', 0.02)
         if isinstance(module, (nn.Linear, nn.Conv3d)):
             module.weight.data.normal_(mean=0.0, std=std)
             if module.bias is not None:
@@ -1840,7 +1840,20 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
                                 assert first_img_length+second_img_length == image_embeds.shape[0], AssertionError("The length split is error in face token")
                                 v = image_embeds[:first_img_length, :]
                                 q = image_embeds[first_img_length:, :]
-                        face_embeds = self.facechecker(img_feature_q=q, img_feature_v=v)
+                        # Determine device/dtype from the first CrossAttention linear
+                        # weight — vip_prompt may be on CPU so cannot use next(parameters())
+                        _blk = self.facechecker.face_checker.blocks[0]
+                        fc_device = _blk.q_proj.weight.device
+                        fc_dtype  = torch.float16
+                        # Also ensure vip_prompt lives on the same device
+                        _vip = self.facechecker.face_checker.vip_prompt
+                        if _vip.device != fc_device:
+                            self.facechecker.face_checker.vip_prompt.data = \
+                                _vip.data.to(fc_device, fc_dtype)
+                        face_embeds = self.facechecker(
+                            img_feature_q=q.to(fc_device, fc_dtype),
+                            img_feature_v=v.to(fc_device, fc_dtype),
+                        )
                         n_face_features = face_embeds.shape[0]
 
                         if n_face_tokens == 2*n_face_features:
@@ -1970,18 +1983,20 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
 
         loss = None
         if labels is not None:
-            # Upcast to float if we need to compute the loss to avoid potential precision issues
-            logits = logits.float()
-            # Shift so that tokens < n predict n
-            shift_logits = logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
-            # Flatten the tokens
+            # Skip fp32 upcast when in bfloat16 — bf16 cross-entropy is numerically stable
+            # and the fp32 cast doubles logits VRAM (~91MB) causing OOM on 12GB GPU.
+            if logits.dtype == torch.float16:
+                logits = logits.float()
+            # Shift so that tokens < n predict n.
+            # Use reshape (view) instead of .contiguous() to avoid allocating a second
+            # large tensor copy — logits[:, :-1, :] is a contiguous slice so reshape
+            # returns a view with zero extra VRAM.
+            shift_logits = logits[:, :-1, :].reshape(-1, self.config.vocab_size)
+            shift_labels = labels[:, 1:].reshape(-1).to(shift_logits.device)
             loss_fct = CrossEntropyLoss()
-            shift_logits = shift_logits.view(-1, self.config.vocab_size)
-            shift_labels = shift_labels.view(-1)
-            # Enable model parallelism
-            shift_labels = shift_labels.to(shift_logits.device)
             loss = loss_fct(shift_logits, shift_labels)
+            del shift_logits, shift_labels
+            logits = None  # not needed for training
 
         if not return_dict:
             output = (logits,) + outputs[1:]
